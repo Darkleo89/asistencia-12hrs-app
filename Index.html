@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <!-- Importación de Bootstrap para un diseño profesional e innovador -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+      body { background-color: #f4f7f6; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+      .container { max-width: 800px; margin-top: 30px; }
+      .card { border: none; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+      .header-app { background: #2c3e50; color: white; padding: 20px; border-radius: 15px 15px 0 0; }
+      .btn-primary { background-color: #3498db; border: none; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="card">
+        <div class="header-app text-center">
+          <h2>Monitor de Asistencia y Documentación</h2>
+          <p class="mb-0">Control de Turnos de 12 Horas</p>
+        </div>
+        <div class="card-body p-4">
+          <form id="formAsistencia">
+            <div class="row mb-3">
+              <div class="col-md-6">
+                <label class="form-label">Elemento (Personal)</label>
+                <input type="text" name="elemento" class="form-control" required>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">Estado de Asistencia</label>
+                <select name="asistencia" class="form-select">
+                  <option value="Puntual">Puntual</option>
+                  <option value="Tarde">Llegada Tarde</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="row mb-3">
+              <div class="col-md-6">
+                <label class="form-label">Inicio del Servicio</label>
+                <input type="datetime-local" name="fechaHoraInicio" class="form-control" required>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">Fin del Servicio</label>
+                <input type="datetime-local" name="fechaHoraFin" class="form-control" required>
+              </div>
+            </div>
+
+            <hr>
+            <h5>Auditoría de Documentación</h5>
+            <div class="row mb-3">
+              <div class="col-md-6">
+                <label class="form-label">Total de Registros Capturados</label>
+                <input type="number" name="docsCompletos" class="form-control" min="0">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">Registros Correctamente Llenados</label>
+                <input type="number" name="docsCorrectos" class="form-control" min="0">
+              </div>
+            </div>
+
+            <div class="text-center mt-4">
+              <button type="button" onclick="enviarFormulario()" class="btn btn-primary btn-lg w-100">Guardar Registro</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      function enviarFormulario() {
+        const form = document.getElementById('formAsistencia');
+        // Aquí podrías agregar una validación visual antes de enviar
+        
+        const data = {
+          elemento: form.elemento.value,
+          asistencia: form.asistencia.value,
+          fecha: form.fechaHoraInicio.value.split('T')[0],
+          horaInicio: form.fechaHoraInicio.value.split('T')[1],
+          fechaFin: form.fechaHoraFin.value.split('T')[0],
+          horaFin: form.fechaHoraFin.value.split('T')[1],
+          docsCompletos: form.docsCompletos.value,
+          docsCorrectos: form.docsCorrectos.value
+        };
+
+        google.script.run
+          .withSuccessHandler(res => {
+            alert(res);
+            form.reset();
+          })
+          .procesarRegistro(data);
+      }
+    </script>
+  </body>
+</html>
