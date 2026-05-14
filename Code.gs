@@ -4,7 +4,7 @@
 // ============================================================
 
 // ── ID DE TU GOOGLE SPREADSHEET ──────────────────────────────
-const SPREADSHEET_ID = 'REEMPLAZA_CON_TU_SPREADSHEET_ID';
+const SPREADSHEET_ID = '19dtu5JvqNxvsVb1t2YIr52M9kqInelb6yVdykLsw5Ic';
 
 // ── NOMBRES DE HOJAS (deben coincidir exactamente) ────────────
 const SHEETS = {

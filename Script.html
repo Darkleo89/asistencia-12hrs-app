@@ -1,0 +1,1361 @@
+<script>
+// ============================================================
+//  L-SENTRY · Scripts.html  —  Lógica Frontend Completa
+// ============================================================
+
+// ── ESTADO GLOBAL ─────────────────────────────────────────
+const App = {
+  sesion:   null,      // { usuario, rol, vistas, idLogin }
+  pagina:   null,      // página activa
+  cache:    {},        // caché de datos para evitar llamadas repetidas
+};
+
+// ── UTILIDADES ────────────────────────────────────────────
+
+function gas(action, payload) {
+  return new Promise((resolve, reject) => {
+    google.script.run
+      .withSuccessHandler(res => {
+        if (res && res.ok) resolve(res.data !== undefined ? res.data : res);
+        else reject(new Error((res && res.error) || 'Error desconocido'));
+      })
+      .withFailureHandler(err => reject(err))
+      .dispatch(action, payload || {});
+  });
+}
+
+function toast(msg, tipo = 'success', duracion = 3500) {
+  const iconos = { success: 'fa-check-circle', error: 'fa-exclamation-circle', warning: 'fa-exclamation-triangle' };
+  const t = document.createElement('div');
+  t.className = `toast ${tipo}`;
+  t.innerHTML = `<i class="fas ${iconos[tipo] || iconos.success}"></i><span>${msg}</span>`;
+  document.getElementById('toast-container').prepend(t);
+  setTimeout(() => t.remove(), duracion);
+}
+
+function loading(btn, estado) {
+  if (!btn) return;
+  btn.disabled = estado;
+  if (estado) {
+    btn._orig = btn.innerHTML;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Procesando...';
+  } else {
+    btn.innerHTML = btn._orig || btn.innerHTML;
+  }
+}
+
+function fmt(val, fallback = '—') {
+  return (val !== undefined && val !== null && val !== '') ? val : fallback;
+}
+
+function pctColor(pct) {
+  const n = parseFloat(pct) || 0;
+  if (n >= 95) return 'var(--green)';
+  if (n >= 85) return 'var(--amber)';
+  return 'var(--red)';
+}
+
+function progClass(pct) {
+  const n = parseFloat(pct) || 0;
+  if (n >= 95) return 'prog-green';
+  if (n >= 80) return 'prog-amber';
+  return 'prog-red';
+}
+
+function rolBadgeClass(rol) {
+  const map = {
+    'Administrador':  'rol-admin',
+    'Capturista':     'rol-capturista',
+    'Proveedor':      'rol-proveedor',
+    'Seguridad Vial': 'rol-segvial',
+  };
+  return map[rol] || 'badge-gray';
+}
+
+// ── AUTENTICACIÓN ─────────────────────────────────────────
+
+function togglePass() {
+  const inp  = document.getElementById('inp-password');
+  const icon = document.getElementById('eye-icon');
+  const show = inp.type === 'password';
+  inp.type   = show ? 'text' : 'password';
+  icon.className = `fas ${show ? 'fa-eye-slash' : 'fa-eye'} toggle-pass`;
+}
+
+async function doLogin() {
+  const usuario  = document.getElementById('inp-usuario').value.trim();
+  const password = document.getElementById('inp-password').value;
+  const errDiv   = document.getElementById('login-error');
+  const btnText  = document.getElementById('btn-login-text');
+  const btnLoad  = document.getElementById('btn-login-loading');
+
+  errDiv.style.display = 'none';
+  if (!usuario || !password) {
+    errDiv.textContent = 'Ingresa usuario y contraseña.';
+    errDiv.style.display = 'block';
+    return;
+  }
+
+  btnText.style.display = 'none';
+  btnLoad.style.display = 'inline-flex';
+
+  try {
+    const data = await gas('login', { usuario, password });
+    App.sesion = data;
+    iniciarApp();
+  } catch (err) {
+    errDiv.textContent = err.message;
+    errDiv.style.display = 'block';
+  } finally {
+    btnText.style.display = 'inline-flex';
+    btnLoad.style.display = 'none';
+  }
+}
+
+async function doLogout() {
+  try { await gas('logout'); } catch (e) {}
+  App.sesion = null;
+  App.cache  = {};
+  document.getElementById('screen-app').style.display = 'none';
+  document.getElementById('screen-login').style.display = 'flex';
+  document.getElementById('inp-password').value = '';
+}
+
+// ── INICIAR APP TRAS LOGIN ────────────────────────────────
+
+function iniciarApp() {
+  // Mostrar pantalla app
+  document.getElementById('screen-login').style.display = 'none';
+  const appScreen = document.getElementById('screen-app');
+  appScreen.style.display = 'flex';
+
+  // Actualizar topbar
+  const ini = (App.sesion.usuario || '').substring(0, 2).toUpperCase();
+  document.getElementById('user-avatar-top').textContent = ini;
+  document.getElementById('user-name-top').textContent   = App.sesion.usuario;
+  document.getElementById('user-rol-top').textContent    = App.sesion.rol;
+
+  // Construir menú lateral según vistas del rol
+  construirMenu();
+
+  // Mostrar badge de solicitudes si aplica
+  const rolesConSolicitudes = ['Administrador', 'Seguridad Vial'];
+  if (rolesConSolicitudes.includes(App.sesion.rol)) {
+    document.getElementById('btn-solicitudes-badge').style.display = 'flex';
+    cargarCountSolicitudes();
+  }
+
+  // Navegar a Dashboard
+  showPage('dashboard');
+}
+
+// ── MENÚ LATERAL DINÁMICO ─────────────────────────────────
+
+const MENU_COMPLETO = [
+  { seccion: 'Principal', items: [
+    { id: 'dashboard',     icon: 'fa-th-large',       label: 'Dashboard',        roles: ['Administrador','Capturista','Proveedor','Seguridad Vial'] },
+    { id: 'resumen-ia',    icon: 'fa-robot',           label: 'Resumen IA',       roles: ['Administrador','Seguridad Vial'], badge: 'IA' },
+  ]},
+  { seccion: 'Operaciones', items: [
+    { id: 'asistencia',    icon: 'fa-user-clock',      label: 'Asistencia',       roles: ['Administrador','Capturista','Proveedor','Seguridad Vial'] },
+    { id: 'kpi-asistencia',icon: 'fa-chart-line',      label: 'KPI Asistencia',   roles: ['Administrador','Seguridad Vial'] },
+    { id: 'documentos',    icon: 'fa-file-alt',        label: 'Documentos',       roles: ['Administrador','Capturista','Proveedor','Seguridad Vial'] },
+    { id: 'kpi-documentos',icon: 'fa-chart-pie',       label: 'KPI Documentos',   roles: ['Administrador','Seguridad Vial'] },
+    { id: 'solicitudes',   icon: 'fa-exchange-alt',    label: 'Solicitudes',      roles: ['Administrador','Proveedor','Seguridad Vial'], badgeId: 'sol-badge' },
+  ]},
+  { seccion: 'Catálogos', items: [
+    { id: 'ubicaciones',   icon: 'fa-map-marker-alt',  label: 'Ubicaciones',      roles: ['Administrador'] },
+    { id: 'clientes',      icon: 'fa-building',        label: 'Clientes',         roles: ['Administrador'] },
+    { id: 'turnos',        icon: 'fa-clock',           label: 'Turnos & Jornadas',roles: ['Administrador'] },
+    { id: 'formatos',      icon: 'fa-clipboard-list',  label: 'Formatos',         roles: ['Administrador'] },
+  ]},
+  { seccion: 'Acceso', items: [
+    { id: 'usuarios',      icon: 'fa-users',           label: 'Usuarios',         roles: ['Administrador'] },
+    { id: 'login-log',     icon: 'fa-sign-in-alt',     label: 'Log de Acceso',    roles: ['Administrador'] },
+  ]},
+];
+
+function construirMenu() {
+  const rol     = App.sesion.rol;
+  const navMenu = document.getElementById('nav-menu');
+  let html = '';
+
+  MENU_COMPLETO.forEach(sec => {
+    const itemsVisibles = sec.items.filter(it => it.roles.includes(rol));
+    if (itemsVisibles.length === 0) return;
+
+    html += `<div class="sidebar-section">
+      <div class="sidebar-label">${sec.seccion}</div>`;
+
+    itemsVisibles.forEach(it => {
+      const badge = it.badge
+        ? `<span class="nav-badge">${it.badge}</span>`
+        : it.badgeId
+          ? `<span class="nav-badge" id="${it.badgeId}" style="display:none"></span>`
+          : '';
+      html += `<div class="nav-item" id="nav-${it.id}" onclick="showPage('${it.id}')">
+        <i class="fas ${it.icon}"></i> ${it.label} ${badge}
+      </div>`;
+    });
+
+    html += `</div><div class="sidebar-divider"></div>`;
+  });
+
+  navMenu.innerHTML = html;
+}
+
+// ── NAVEGACIÓN ────────────────────────────────────────────
+
+function showPage(id) {
+  App.pagina = id;
+
+  // Marcar nav activo
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  const navEl = document.getElementById('nav-' + id);
+  if (navEl) navEl.classList.add('active');
+
+  // Renderizar página
+  const container = document.getElementById('pages-container');
+  container.innerHTML = '';
+
+  const page = document.createElement('div');
+  page.className = 'page active';
+  page.id = 'page-' + id;
+  container.appendChild(page);
+
+  // Mostrar loader brevemente
+  showLoader(true);
+
+  const RENDER = {
+    'dashboard':       renderDashboard,
+    'asistencia':      renderAsistencia,
+    'kpi-asistencia':  renderKpiAsistencia,
+    'documentos':      renderDocumentos,
+    'kpi-documentos':  renderKpiDocumentos,
+    'solicitudes':     renderSolicitudes,
+    'ubicaciones':     renderUbicaciones,
+    'clientes':        renderClientes,
+    'turnos':          renderTurnos,
+    'formatos':        renderFormatos,
+    'usuarios':        renderUsuarios,
+    'login-log':       renderLoginLog,
+    'resumen-ia':      renderResumenIA,
+  };
+
+  const fn = RENDER[id];
+  if (fn) {
+    Promise.resolve(fn(page)).finally(() => showLoader(false));
+  } else {
+    page.innerHTML = `<div class="empty-state"><i class="fas fa-tools"></i><h3>Sección en construcción</h3><p>Próximamente disponible</p></div>`;
+    showLoader(false);
+  }
+}
+
+function showLoader(estado) {
+  document.getElementById('page-loader').style.display = estado ? 'flex' : 'none';
+}
+
+function sincronizar() {
+  App.cache = {};
+  const icon = document.getElementById('sync-icon');
+  icon.classList.add('fa-spin');
+  showPage(App.pagina);
+  setTimeout(() => icon.classList.remove('fa-spin'), 1200);
+  toast('Datos actualizados', 'success', 2000);
+}
+
+// ── DASHBOARD ─────────────────────────────────────────────
+
+async function renderDashboard(page) {
+  page.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Dashboard</div>
+        <div class="page-subtitle" id="dash-sub">Cargando...</div>
+      </div>
+      <div class="header-actions">
+        <button class="btn btn-outline btn-sm" onclick="sincronizar()"><i class="fas fa-sync-alt"></i> Actualizar</button>
+      </div>
+    </div>
+    <div id="dash-kpis" class="kpi-grid"></div>
+    <div class="grid-2" id="dash-bottom"></div>`;
+
+  try {
+    const d = await gas('getDashboard');
+    const k = d.kpis;
+    const hoy = new Date().toLocaleDateString('es-MX', { weekday:'long', day:'numeric', month:'long' });
+    document.getElementById('dash-sub').textContent = hoy.charAt(0).toUpperCase() + hoy.slice(1);
+
+    // KPIs según rol
+    let kpiHtml = '';
+    kpiHtml += kpiCard('Presentes Hoy',       k.asistenciaHoy,       'cyan',   'fa-user-check');
+    kpiHtml += kpiCard('Faltas Hoy',           k.faltasHoy,           'red',    'fa-user-times');
+    kpiHtml += kpiCard('Docs Completados % ',  k.pctDocumentosMes + '%', 'purple', 'fa-file-check');
+    if (k.solicitudesPendientes !== null)
+      kpiHtml += kpiCard('Solicitudes Pend.', k.solicitudesPendientes, 'amber', 'fa-exchange-alt');
+    else
+      kpiHtml += kpiCard('Docs del Mes',       k.totalDocsMes,        'green',  'fa-file-alt');
+
+    document.getElementById('dash-kpis').innerHTML = kpiHtml;
+
+    // Actividad reciente
+    let actHtml = `<div class="detail-card">
+      <div class="detail-card-title">Actividad Reciente</div>
+      <div class="timeline">`;
+    (d.actividadReciente || []).forEach(a => {
+      const color = a.incidencia ? 'var(--amber)' : 'var(--green)';
+      actHtml += `<div class="tl-item">
+        <div class="tl-dot" style="background:${color}"></div>
+        <div>
+          <div class="tl-time">${fmt(a.hora)}</div>
+          <div class="tl-text">${fmt(a.texto)}</div>
+          <div class="tl-sub">${fmt(a.sub)}${a.incidencia ? ' · <span style="color:var(--amber)">'+a.incidencia+'</span>' : ''}</div>
+        </div>
+      </div>`;
+    });
+    if (!d.actividadReciente || d.actividadReciente.length === 0)
+      actHtml += `<div class="empty-state" style="padding:20px"><i class="fas fa-inbox"></i><p>Sin actividad reciente</p></div>`;
+    actHtml += `</div></div>`;
+
+    // KPI Semana
+    let kpiSemHtml = `<div class="table-card">
+      <div class="table-card-header"><div class="table-card-title">KPI Asistencia — Semanas recientes</div></div>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Fecha</th><th>Cliente</th><th>Presentes</th><th>Plantilla</th><th>Nivel</th></tr></thead>
+        <tbody>`;
+    (d.kpiSemana || []).forEach(r => {
+      const pct = r['Nivel_Asistencia'] || '—';
+      kpiSemHtml += `<tr>
+        <td class="mono">${fmt(r['Fecha_Resumen'])}</td>
+        <td>${fmt(r['IdCliente'])}</td>
+        <td class="mono">${fmt(r['Asistencia_Dia'])}</td>
+        <td class="mono">${fmt(r['Plantilla_Dia'])}</td>
+        <td><span style="color:${pctColor(pct)};font-weight:600;font-family:monospace">${pct}</span></td>
+      </tr>`;
+    });
+    if (!d.kpiSemana || d.kpiSemana.length === 0)
+      kpiSemHtml += `<tr><td colspan="5"><div class="empty-state" style="padding:16px"><p>Sin datos de KPI</p></div></td></tr>`;
+    kpiSemHtml += `</tbody></table></div></div>`;
+
+    document.getElementById('dash-bottom').innerHTML = kpiSemHtml + actHtml;
+
+  } catch (err) {
+    page.innerHTML += `<div class="empty-state"><i class="fas fa-exclamation-triangle"></i><h3>Error al cargar</h3><p>${err.message}</p></div>`;
+  }
+}
+
+function kpiCard(label, val, color, icon) {
+  return `<div class="kpi-card kpi-${color}">
+    <div class="kpi-label">${label}</div>
+    <div class="kpi-value" style="color:var(--${color})">${val}</div>
+    <i class="fas ${icon} kpi-bg-icon"></i>
+  </div>`;
+}
+
+// ── ASISTENCIA ────────────────────────────────────────────
+
+async function renderAsistencia(page) {
+  const canCreate = ['Administrador','Capturista'].includes(App.sesion.rol);
+  const canEdit   = App.sesion.rol === 'Administrador';
+  const isProveedor = App.sesion.rol === 'Proveedor';
+
+  page.innerHTML = `
+    <div class="page-header">
+      <div><div class="page-title">Asistencia</div><div class="page-subtitle" id="asist-sub">Cargando...</div></div>
+      <div class="header-actions">
+        ${canCreate ? `<button class="btn btn-primary btn-sm" onclick="modalNuevaAsistencia()"><i class="fas fa-plus"></i> Nuevo Registro</button>` : ''}
+      </div>
+    </div>
+    <div class="kpi-grid" id="asist-kpis"></div>
+    <div class="table-card">
+      <div class="table-card-header">
+        <div><div class="table-card-title">Registros de Asistencia</div></div>
+        <div class="table-toolbar">
+          <div class="tbl-search-wrap"><i class="fas fa-search"></i>
+            <input class="tbl-search" type="text" placeholder="Buscar nombre..." oninput="filtrarTabla('tbl-asistencia',this.value)">
+          </div>
+          <select class="form-input btn-sm" style="height:auto;width:auto" onchange="recargarAsistencia(this.value)">
+            <option value="">Todos los meses</option>
+            ${mesesOpts()}
+          </select>
+        </div>
+      </div>
+      <div class="tbl-wrap"><table id="tbl-asistencia">
+        <thead><tr>
+          <th>ID</th><th>Nombre</th><th>Ubicación</th><th>Fecha</th>
+          <th>Entrada</th><th>Salida</th><th>Turno</th><th>Incidencia</th><th>Estatus</th><th></th>
+        </tr></thead>
+        <tbody id="tbody-asistencia"><tr><td colspan="10" style="text-align:center;padding:20px;color:var(--text-muted)"><i class="fas fa-spinner fa-spin"></i> Cargando...</td></tr></tbody>
+      </table></div>
+      <div class="table-footer">
+        <span class="table-footer-info" id="asist-info"></span>
+        <div style="display:flex;gap:6px" id="asist-pag"></div>
+      </div>
+    </div>`;
+
+  await cargarAsistencia(1, {});
+}
+
+let _asistPagina = 1;
+let _asistFiltros = {};
+
+async function cargarAsistencia(pag, filtros) {
+  _asistPagina  = pag || 1;
+  _asistFiltros = filtros || _asistFiltros;
+
+  try {
+    const res = await gas('getAsistencia', { ..._asistFiltros, pagina: _asistPagina, porPagina: 50 });
+
+    // KPIs
+    const s = res.stats || {};
+    const kpiEl = document.getElementById('asist-kpis');
+    if (kpiEl) kpiEl.innerHTML =
+      kpiCard('Presentes', s.presentes || 0, 'cyan', 'fa-user-check') +
+      kpiCard('Faltas', s.faltas || 0, 'red', 'fa-user-times') +
+      kpiCard('Adicionales', s.adicionales || 0, 'amber', 'fa-user-plus') +
+      kpiCard('Penalizados', s.penalizados || 0, 'purple', 'fa-ban');
+
+    const sub = document.getElementById('asist-sub');
+    if (sub) sub.textContent = `${res.total} registros totales`;
+
+    // Tabla
+    const tbody = document.getElementById('tbody-asistencia');
+    if (!tbody) return;
+
+    if (!res.registros || res.registros.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="10"><div class="empty-state"><i class="fas fa-inbox"></i><p>No hay registros</p></div></td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = res.registros.map(r => {
+      const inc = r['Incidencia del Elemto'] || '';
+      const incBadge = inc ? `<span class="badge badge-amber">${inc}</span>` : '—';
+      const estatus = r['Estatus'] === 'Activo'
+        ? `<span class="badge badge-green"><span class="badge-dot"></span>Activo</span>`
+        : `<span class="badge badge-gray">${r['Estatus'] || '—'}</span>`;
+
+      const acciones = App.sesion.rol === 'Administrador'
+        ? `<button class="btn btn-outline btn-xs" onclick="modalEditarAsistencia('${r['IDAsistencia']}')"><i class="fas fa-edit"></i></button>`
+        : App.sesion.rol === 'Proveedor'
+          ? `<button class="btn btn-outline btn-xs" onclick="modalSolicitarCambio('Asistencia','${r['IDAsistencia']}')"><i class="fas fa-exchange-alt"></i></button>`
+          : '';
+
+      return `<tr>
+        <td class="mono">${fmt(r['IDAsistencia'])}</td>
+        <td><strong>${fmt(r['Nombre_Completo'])}</strong></td>
+        <td>${fmt(r['IDUbicacion'])}</td>
+        <td class="mono">${fmt(r['Fecha_Entrada'])}</td>
+        <td class="mono" style="color:var(--green)">${fmt(r['Hora_Entrada'])}</td>
+        <td class="mono" style="color:var(--cyan)">${fmt(r['Hora_Salida'])}</td>
+        <td>${fmt(r['IDTurno'])}</td>
+        <td>${incBadge}</td>
+        <td>${estatus}</td>
+        <td>${acciones}</td>
+      </tr>`;
+    }).join('');
+
+    // Info y paginación
+    const infoEl = document.getElementById('asist-info');
+    const pagEl  = document.getElementById('asist-pag');
+    if (infoEl) infoEl.textContent = `Mostrando ${res.registros.length} de ${res.total}`;
+    if (pagEl)  pagEl.innerHTML = paginacion(res.pagina, res.totalPaginas, 'cargarAsistencia');
+
+  } catch (err) {
+    toast('Error al cargar asistencia: ' + err.message, 'error');
+  }
+}
+
+async function recargarAsistencia(mes) {
+  await cargarAsistencia(1, mes ? { mes } : {});
+}
+
+// ── MODAL NUEVA ASISTENCIA ────────────────────────────────
+
+async function modalNuevaAsistencia() {
+  // Cargar catálogos
+  let ubicaciones = [], clientes = [], turnos = [];
+  try {
+    [ubicaciones, clientes, turnos] = await Promise.all([
+      gas('getUbicaciones'), gas('getClientes'), gas('getTurnos')
+    ]);
+  } catch (e) {}
+
+  openModal('Nuevo Registro de Asistencia', `
+    <div class="form-grid">
+      <div class="form-group full">
+        <label class="form-label">Nombre Completo <span class="req">*</span></label>
+        <input id="f-nombre" class="form-input" placeholder="Apellido Paterno Materno, Nombre">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Cliente <span class="req">*</span></label>
+        <select id="f-cliente" class="form-input">
+          <option value="">— Seleccionar —</option>
+          ${clientes.map ? clientes.map(c => `<option value="${c['IDCliente']}">${c['IDCliente']} · ${c['Nombre_Cliente']||''}</option>`).join('') : ''}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Ubicación <span class="req">*</span></label>
+        <select id="f-ubicacion" class="form-input">
+          <option value="">— Seleccionar —</option>
+          ${ubicaciones.map ? ubicaciones.map(u => `<option value="${u['IDUbicacion']}">${u['IDUbicacion']} · ${u['Nombre_Ubicacion']||''}</option>`).join('') : ''}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Fecha Entrada <span class="req">*</span></label>
+        <input id="f-fecha-entrada" class="form-input" type="date" value="${new Date().toISOString().slice(0,10)}">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Hora Entrada</label>
+        <input id="f-hora-entrada" class="form-input" type="time">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Fecha Salida</label>
+        <input id="f-fecha-salida" class="form-input" type="date">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Hora Salida</label>
+        <input id="f-hora-salida" class="form-input" type="time">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Turno</label>
+        <select id="f-turno" class="form-input">
+          <option value="">— Seleccionar —</option>
+          ${turnos.map ? turnos.map(t => `<option value="${t['IDTurno']}">${t['Nombre_Turno']||''}</option>`).join('') : ''}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Incidencia</label>
+        <select id="f-incidencia" class="form-input">
+          <option value="">Ninguna</option>
+          <option>Retardo</option><option>Falta</option><option>Adicional</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Penalizado</label>
+        <select id="f-penalizado" class="form-input">
+          <option value="No">No</option><option value="Si">Sí</option>
+        </select>
+      </div>
+      <div class="form-group full">
+        <label class="form-label">Observaciones del Turno</label>
+        <textarea id="f-obs" class="form-input" rows="2" placeholder="Observaciones..."></textarea>
+      </div>
+    </div>`,
+    [
+      { label: 'Cancelar', cls: 'btn-outline', fn: closeModal },
+      { label: '<i class="fas fa-save"></i> Guardar', cls: 'btn-primary', fn: guardarAsistencia },
+    ]
+  );
+}
+
+async function guardarAsistencia() {
+  const btn = document.querySelector('#modal-footer .btn-primary');
+  const payload = {
+    Nombre_Completo: document.getElementById('f-nombre').value.trim(),
+    IDCliente:       document.getElementById('f-cliente').value,
+    IDUbicacion:     document.getElementById('f-ubicacion').value,
+    Fecha_Entrada:   document.getElementById('f-fecha-entrada').value,
+    Hora_Entrada:    document.getElementById('f-hora-entrada').value,
+    Fecha_Salida:    document.getElementById('f-fecha-salida').value,
+    Hora_Salida:     document.getElementById('f-hora-salida').value,
+    IDTurno:         document.getElementById('f-turno').value,
+    Incidencia:      document.getElementById('f-incidencia').value,
+    Penalizado:      document.getElementById('f-penalizado').value,
+    Observaciones:   document.getElementById('f-obs').value,
+  };
+
+  if (!payload.Nombre_Completo || !payload.IDCliente || !payload.IDUbicacion || !payload.Fecha_Entrada) {
+    toast('Llena los campos obligatorios', 'warning'); return;
+  }
+
+  loading(btn, true);
+  try {
+    const res = await gas('crearAsistencia', payload);
+    toast(`Registro creado: ${res.IDAsistencia}`, 'success');
+    closeModal();
+    showPage('asistencia');
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    loading(btn, false);
+  }
+}
+
+// ── MODAL EDITAR ASISTENCIA (Admin) ──────────────────────
+
+async function modalEditarAsistencia(id) {
+  openModal('Editar Registro — ' + id, `
+    <div class="form-group">
+      <label class="form-label">Hora Entrada</label>
+      <input id="e-hora-entrada" class="form-input" type="time">
+    </div>
+    <div class="form-group" style="margin-top:12px">
+      <label class="form-label">Hora Salida</label>
+      <input id="e-hora-salida" class="form-input" type="time">
+    </div>
+    <div class="form-group" style="margin-top:12px">
+      <label class="form-label">Incidencia</label>
+      <select id="e-incidencia" class="form-input">
+        <option value="">Ninguna</option>
+        <option>Retardo</option><option>Falta</option><option>Adicional</option>
+      </select>
+    </div>
+    <div class="form-group" style="margin-top:12px">
+      <label class="form-label">Penalizado</label>
+      <select id="e-penalizado" class="form-input"><option value="No">No</option><option value="Si">Sí</option></select>
+    </div>`,
+    [
+      { label: 'Cancelar', cls: 'btn-outline', fn: closeModal },
+      { label: '<i class="fas fa-save"></i> Actualizar', cls: 'btn-primary', fn: () => ejecutarEditarAsistencia(id) },
+    ]
+  );
+}
+
+async function ejecutarEditarAsistencia(id) {
+  const btn = document.querySelector('#modal-footer .btn-primary');
+  const payload = {
+    IDAsistencia:          id,
+    Hora_Entrada:          document.getElementById('e-hora-entrada').value || undefined,
+    Hora_Salida:           document.getElementById('e-hora-salida').value  || undefined,
+    'Incidencia del Elemto': document.getElementById('e-incidencia').value || undefined,
+    Penalizado:            document.getElementById('e-penalizado').value   || undefined,
+  };
+  loading(btn, true);
+  try {
+    await gas('editarAsistencia', payload);
+    toast('Registro actualizado', 'success');
+    closeModal();
+    showPage('asistencia');
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally { loading(btn, false); }
+}
+
+// ── SOLICITAR CAMBIO (Proveedor) ──────────────────────────
+
+function modalSolicitarCambio(modulo, idRegistro) {
+  openModal(`Solicitar Cambio — ${modulo} ${idRegistro}`, `
+    <div class="ia-card" style="margin-bottom:14px">
+      <div class="ia-chip"><i class="fas fa-info-circle"></i> Flujo de aprobación</div>
+      <div class="ia-text">Tu solicitud será enviada a <strong style="color:var(--text-primary)">Seguridad Vial</strong> para autorización. Los cambios no se aplicarán hasta ser aprobados.</div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Campo a modificar</label>
+      <select id="sol-campo" class="form-input">
+        <option value="Hora_Entrada">Hora de Entrada</option>
+        <option value="Hora_Salida">Hora de Salida</option>
+        <option value="Incidencia del Elemto">Incidencia</option>
+        <option value="Observaciones del Turno">Observaciones</option>
+      </select>
+    </div>
+    <div class="form-group" style="margin-top:12px">
+      <label class="form-label">Nuevo valor</label>
+      <input id="sol-valor" class="form-input" placeholder="Valor correcto">
+    </div>
+    <div class="form-group" style="margin-top:12px">
+      <label class="form-label">Justificación</label>
+      <textarea id="sol-just" class="form-input" rows="2" placeholder="Motivo del cambio..."></textarea>
+    </div>`,
+    [
+      { label: 'Cancelar', cls: 'btn-outline', fn: closeModal },
+      { label: '<i class="fas fa-paper-plane"></i> Enviar Solicitud', cls: 'btn-primary', fn: () => enviarSolicitud(modulo, idRegistro) },
+    ]
+  );
+}
+
+async function enviarSolicitud(modulo, idRegistro) {
+  const btn    = document.querySelector('#modal-footer .btn-primary');
+  const campo  = document.getElementById('sol-campo').value;
+  const valor  = document.getElementById('sol-valor').value.trim();
+  const just   = document.getElementById('sol-just').value.trim();
+
+  if (!valor) { toast('Ingresa el nuevo valor', 'warning'); return; }
+
+  loading(btn, true);
+  try {
+    const res = await gas('crearSolicitud', {
+      modulo,
+      idRegistro,
+      cambios:      { [campo]: valor },
+      justificacion: just,
+    });
+    toast(res.mensaje || 'Solicitud enviada', 'success');
+    closeModal();
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally { loading(btn, false); }
+}
+
+// ── SOLICITUDES (Seguridad Vial / Admin) ──────────────────
+
+async function renderSolicitudes(page) {
+  const rol = App.sesion.rol;
+  page.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Solicitudes de Cambio</div>
+        <div class="page-subtitle">${rol === 'Proveedor' ? 'Mis solicitudes enviadas' : 'Pendientes de autorización'}</div>
+      </div>
+    </div>
+    <div class="kpi-grid kpi-grid-3" id="sol-kpis"></div>
+    <div class="tabs">
+      <div class="tab active" onclick="filtrarSolicitudes(this,'')">Todas</div>
+      <div class="tab" onclick="filtrarSolicitudes(this,'Pendiente')">Pendientes</div>
+      <div class="tab" onclick="filtrarSolicitudes(this,'Aprobada')">Aprobadas</div>
+      <div class="tab" onclick="filtrarSolicitudes(this,'Rechazada')">Rechazadas</div>
+    </div>
+    <div id="sol-lista">
+      <div class="empty-state"><i class="fas fa-spinner fa-spin"></i><p>Cargando...</p></div>
+    </div>`;
+
+  try {
+    const res = await gas('getSolicitudes');
+    window._solicitudes = res.solicitudes || [];
+    const s = res.stats || {};
+
+    document.getElementById('sol-kpis').innerHTML =
+      kpiCard('Total', s.total || 0, 'cyan', 'fa-list') +
+      kpiCard('Pendientes', s.pendientes || 0, 'amber', 'fa-clock') +
+      kpiCard('Aprobadas', s.aprobadas || 0, 'green', 'fa-check-circle');
+
+    renderListaSolicitudes(window._solicitudes);
+  } catch (err) {
+    toast('Error: ' + err.message, 'error');
+  }
+}
+
+function filtrarSolicitudes(tabEl, estatus) {
+  document.querySelectorAll('#page-solicitudes .tab').forEach(t => t.classList.remove('active'));
+  tabEl.classList.add('active');
+  const lista = estatus
+    ? (window._solicitudes || []).filter(s => s['Estatus'] === estatus)
+    : (window._solicitudes || []);
+  renderListaSolicitudes(lista);
+}
+
+function renderListaSolicitudes(lista) {
+  const container = document.getElementById('sol-lista');
+  if (!lista || lista.length === 0) {
+    container.innerHTML = `<div class="empty-state"><i class="fas fa-inbox"></i><h3>Sin solicitudes</h3><p>No hay solicitudes en esta categoría</p></div>`;
+    return;
+  }
+
+  const canResolver = ['Administrador','Seguridad Vial'].includes(App.sesion.rol);
+
+  container.innerHTML = lista.map(s => {
+    const est = s['Estatus'] || 'Pendiente';
+    const estClass = { Pendiente: 'pendiente', Aprobada: 'aprobada', Rechazada: 'rechazada' }[est] || '';
+    const estBadge = { Pendiente: 'badge-amber', Aprobada: 'badge-green', Rechazada: 'badge-red' }[est] || 'badge-gray';
+
+    const cambios = s._cambios || {};
+    const antes   = s._anteriores || {};
+    const cambiosHtml = Object.keys(cambios).map(campo =>
+      `<div class="sol-cambio-row">
+        <span class="sol-campo">${campo}</span>
+        <span class="sol-antes">${antes[campo] || '—'}</span>
+        <span class="sol-arrow">→</span>
+        <span class="sol-despues">${cambios[campo]}</span>
+      </div>`
+    ).join('');
+
+    const acciones = (canResolver && est === 'Pendiente') ? `
+      <div class="sol-actions">
+        <button class="btn btn-danger btn-sm" onclick="resolverSolicitud('${s['IDSolicitud']}','Rechazada')">
+          <i class="fas fa-times"></i> Rechazar
+        </button>
+        <button class="btn btn-success btn-sm" onclick="resolverSolicitud('${s['IDSolicitud']}','Aprobada')">
+          <i class="fas fa-check"></i> Aprobar
+        </button>
+      </div>` : '';
+
+    return `<div class="sol-card ${estClass}">
+      <div class="sol-header">
+        <span class="sol-id">${s['IDSolicitud']}</span>
+        <span class="sol-modulo">${s['Modulo']}</span>
+        <span style="font-family:monospace;font-size:12px;color:var(--text-muted)">${s['IDRegistro']}</span>
+        <span class="badge ${estBadge}" style="margin-left:auto"><span class="badge-dot"></span>${est}</span>
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">
+        <i class="fas fa-user"></i> ${s['Usuario_Proveedor']} · ${s['Fecha_Solicitud']} ${s['Hora_Solicitud']}
+        ${s['Usuario_Resolutor'] ? ` · <i class="fas fa-shield-alt"></i> ${s['Usuario_Resolutor']} · ${s['Fecha_Resolucion']}` : ''}
+      </div>
+      <div class="sol-cambios">${cambiosHtml || '—'}</div>
+      ${s['Justificacion'] ? `<div style="font-size:12px;color:var(--text-secondary);margin-top:6px"><i class="fas fa-comment"></i> ${s['Justificacion']}</div>` : ''}
+      ${s['Comentario_Resolucion'] ? `<div style="font-size:12px;color:var(--cyan);margin-top:4px"><i class="fas fa-reply"></i> ${s['Comentario_Resolucion']}</div>` : ''}
+      ${acciones}
+    </div>`;
+  }).join('');
+}
+
+async function resolverSolicitud(id, decision) {
+  openModal(`${decision === 'Aprobada' ? '✅ Aprobar' : '❌ Rechazar'} Solicitud ${id}`, `
+    <p style="font-size:13px;color:var(--text-secondary);margin-bottom:14px">
+      ${decision === 'Aprobada'
+        ? 'Al aprobar, los cambios se aplicarán <strong>inmediatamente</strong> al registro original.'
+        : 'El registro original no será modificado.'}
+    </p>
+    <div class="form-group">
+      <label class="form-label">Comentario (opcional)</label>
+      <textarea id="res-comentario" class="form-input" rows="2" placeholder="Motivo de la decisión..."></textarea>
+    </div>`,
+    [
+      { label: 'Cancelar', cls: 'btn-outline', fn: closeModal },
+      { label: decision === 'Aprobada' ? '<i class="fas fa-check"></i> Confirmar Aprobación' : '<i class="fas fa-times"></i> Confirmar Rechazo',
+        cls: decision === 'Aprobada' ? 'btn-success' : 'btn-danger',
+        fn: () => ejecutarResolucion(id, decision) },
+    ]
+  );
+}
+
+async function ejecutarResolucion(id, decision) {
+  const btn = document.querySelector('#modal-footer button:last-child');
+  loading(btn, true);
+  try {
+    const res = await gas('resolverSolicitud', {
+      IDSolicitud: id,
+      decision,
+      comentario: document.getElementById('res-comentario').value,
+    });
+    toast(res.mensaje || 'Resolución guardada', 'success');
+    closeModal();
+    cargarCountSolicitudes();
+    showPage('solicitudes');
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally { loading(btn, false); }
+}
+
+async function cargarCountSolicitudes() {
+  try {
+    const res = await gas('getSolicitudes');
+    const pend = (res.stats || {}).pendientes || 0;
+    const badge    = document.getElementById('sol-badge');
+    const notifDot = document.getElementById('notif-count');
+    if (badge) {
+      badge.textContent    = pend || '';
+      badge.style.display  = pend ? 'inline-flex' : 'none';
+      badge.className      = pend ? 'nav-badge alert' : 'nav-badge';
+    }
+    if (notifDot) {
+      notifDot.textContent   = pend || '';
+      notifDot.style.display = pend ? 'flex' : 'none';
+    }
+  } catch (e) {}
+}
+
+// ── DOCUMENTOS ────────────────────────────────────────────
+
+async function renderDocumentos(page) {
+  const canCreate  = ['Administrador','Capturista'].includes(App.sesion.rol);
+
+  page.innerHTML = `
+    <div class="page-header">
+      <div><div class="page-title">Documentos</div><div class="page-subtitle" id="doc-sub">Cargando...</div></div>
+      <div class="header-actions">
+        ${canCreate ? `<button class="btn btn-primary btn-sm" onclick="modalNuevoDocumento()"><i class="fas fa-plus"></i> Nuevo Documento</button>` : ''}
+      </div>
+    </div>
+    <div class="kpi-grid" id="doc-kpis"></div>
+    <div class="table-card">
+      <div class="table-card-header">
+        <div><div class="table-card-title">Registro de Documentos</div></div>
+        <div class="table-toolbar">
+          <div class="tbl-search-wrap"><i class="fas fa-search"></i>
+            <input class="tbl-search" type="text" placeholder="Buscar formato..." oninput="filtrarTabla('tbl-documentos',this.value)">
+          </div>
+        </div>
+      </div>
+      <div class="tbl-wrap"><table id="tbl-documentos">
+        <thead><tr>
+          <th>ID</th><th>Formato</th><th>Ubicación</th><th>Fecha</th>
+          <th>Campos</th><th>% Llenado</th><th>Req. Obl.</th><th>Incidencia</th><th>Estatus</th><th></th>
+        </tr></thead>
+        <tbody id="tbody-documentos">
+          <tr><td colspan="10" style="text-align:center;padding:20px;color:var(--text-muted)"><i class="fas fa-spinner fa-spin"></i> Cargando...</td></tr>
+        </tbody>
+      </table></div>
+      <div class="table-footer">
+        <span class="table-footer-info" id="doc-info"></span>
+        <div style="display:flex;gap:6px" id="doc-pag"></div>
+      </div>
+    </div>`;
+
+  await cargarDocumentos(1, {});
+}
+
+async function cargarDocumentos(pag, filtros) {
+  try {
+    const res = await gas('getDocumentos', { ...(filtros||{}), pagina: pag||1, porPagina: 50 });
+    const s   = res.stats || {};
+
+    const kpiEl = document.getElementById('doc-kpis');
+    if (kpiEl) kpiEl.innerHTML =
+      kpiCard('Total Docs', s.total || 0, 'purple', 'fa-file-alt') +
+      kpiCard('Completos', s.completos || 0, 'green', 'fa-file-check') +
+      kpiCard('% Promedio', (s.pctPromedio || 0) + '%', 'cyan', 'fa-percentage') +
+      kpiCard('Incidencias', s.incidencias || 0, 'red', 'fa-exclamation-circle');
+
+    const sub = document.getElementById('doc-sub');
+    if (sub) sub.textContent = `${res.total} documentos registrados`;
+
+    const tbody = document.getElementById('tbody-documentos');
+    if (!tbody) return;
+
+    if (!res.registros || res.registros.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="10"><div class="empty-state"><i class="fas fa-inbox"></i><p>No hay documentos</p></div></td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = res.registros.map(r => {
+      const pct     = r._pctCampos || 0;
+      const pctReqs = r._pctReqs   || 0;
+      const inc     = r['Incidencia del Documento'] || '';
+
+      const acciones = App.sesion.rol === 'Proveedor'
+        ? `<button class="btn btn-outline btn-xs" onclick="modalSolicitarCambio('Documento','${r['IDDocumentacion']}')"><i class="fas fa-exchange-alt"></i></button>`
+        : '';
+
+      return `<tr>
+        <td class="mono">${fmt(r['IDDocumentacion'])}</td>
+        <td>${fmt(r['IDFormato'])}</td>
+        <td>${fmt(r['IDUbicacion'])}</td>
+        <td class="mono">${fmt(r['Fecha_Doc'])}</td>
+        <td class="mono">${fmt(r['Campos_llenados'])} / ${fmt(r['TCampos_llenados'])}</td>
+        <td>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div class="prog-bar" style="width:70px"><div class="prog-fill ${progClass(pct)}" style="width:${pct}%"></div></div>
+            <span style="font-size:11px;font-weight:600;color:${pctColor(pct)};font-family:monospace">${pct}%</span>
+          </div>
+        </td>
+        <td><span style="color:${pctColor(pctReqs)};font-weight:600;font-family:monospace">${pctReqs}%</span></td>
+        <td>${inc ? `<span class="badge badge-amber">${inc}</span>` : '—'}</td>
+        <td>${r['Estatus'] === 'Activo' ? `<span class="badge badge-green"><span class="badge-dot"></span>Activo</span>` : `<span class="badge badge-gray">${r['Estatus']||'—'}</span>`}</td>
+        <td>${acciones}</td>
+      </tr>`;
+    }).join('');
+
+    const infoEl = document.getElementById('doc-info');
+    const pagEl  = document.getElementById('doc-pag');
+    if (infoEl) infoEl.textContent = `Mostrando ${res.registros.length} de ${res.total}`;
+    if (pagEl)  pagEl.innerHTML = paginacion(res.pagina, res.totalPaginas, 'cargarDocumentos');
+
+  } catch (err) {
+    toast('Error al cargar documentos: ' + err.message, 'error');
+  }
+}
+
+async function modalNuevoDocumento() {
+  let ubicaciones = [], clientes = [], formatos = [];
+  try { [ubicaciones, clientes, formatos] = await Promise.all([gas('getUbicaciones'), gas('getClientes'), gas('getFormatos')]); } catch(e){}
+
+  openModal('Nuevo Documento', `
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label">Cliente <span class="req">*</span></label>
+        <select id="fd-cliente" class="form-input">
+          <option value="">— Seleccionar —</option>
+          ${clientes.map ? clientes.map(c=>`<option value="${c['IDCliente']}">${c['IDCliente']} · ${c['Nombre_Cliente']||''}</option>`).join(''):''}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Formato <span class="req">*</span></label>
+        <select id="fd-formato" class="form-input">
+          <option value="">— Seleccionar —</option>
+          ${formatos.map ? formatos.map(f=>`<option value="${f['IDFormato']}">${f['IDFormato']} · ${f['Nombre_Formato']||''}</option>`).join(''):''}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Ubicación <span class="req">*</span></label>
+        <select id="fd-ubicacion" class="form-input">
+          <option value="">— Seleccionar —</option>
+          ${ubicaciones.map ? ubicaciones.map(u=>`<option value="${u['IDUbicacion']}">${u['IDUbicacion']} · ${u['Nombre_Ubicacion']||''}</option>`).join(''):''}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Fecha Documento</label>
+        <input id="fd-fecha" class="form-input" type="date" value="${new Date().toISOString().slice(0,10)}">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Campos Llenados</label>
+        <input id="fd-campos" class="form-input" type="number" placeholder="0" min="0">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Total Campos</label>
+        <input id="fd-tcampos" class="form-input" type="number" placeholder="0" min="0">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Requisitos Llenados</label>
+        <input id="fd-reqs" class="form-input" type="number" placeholder="0" min="0">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Total Requisitos</label>
+        <input id="fd-treqs" class="form-input" type="number" placeholder="0" min="0">
+      </div>
+      <div class="form-group full">
+        <label class="form-label">Incidencia</label>
+        <input id="fd-incidencia" class="form-input" placeholder="Descripción de incidencia (si aplica)">
+      </div>
+      <div class="form-group full">
+        <label class="form-label">Observaciones</label>
+        <textarea id="fd-obs" class="form-input" rows="2" placeholder="Observaciones..."></textarea>
+      </div>
+    </div>`,
+    [
+      { label: 'Cancelar', cls: 'btn-outline', fn: closeModal },
+      { label: '<i class="fas fa-save"></i> Guardar', cls: 'btn-primary', fn: guardarDocumento },
+    ]
+  );
+}
+
+async function guardarDocumento() {
+  const btn = document.querySelector('#modal-footer .btn-primary');
+  const payload = {
+    IDCliente:           document.getElementById('fd-cliente').value,
+    IDFormato:           document.getElementById('fd-formato').value,
+    IDUbicacion:         document.getElementById('fd-ubicacion').value,
+    Fecha_Doc:           document.getElementById('fd-fecha').value,
+    Campos_llenados:     document.getElementById('fd-campos').value,
+    TCampos_llenados:    document.getElementById('fd-tcampos').value,
+    Requisitos_Llenados: document.getElementById('fd-reqs').value,
+    Total_Requisitos:    document.getElementById('fd-treqs').value,
+    Incidencia:          document.getElementById('fd-incidencia').value,
+    Observaciones:       document.getElementById('fd-obs').value,
+  };
+  if (!payload.IDCliente || !payload.IDFormato || !payload.IDUbicacion) {
+    toast('Llena los campos obligatorios', 'warning'); return;
+  }
+  loading(btn, true);
+  try {
+    const res = await gas('crearDocumento', payload);
+    toast(`Documento creado: ${res.IDDocumentacion}`, 'success');
+    closeModal();
+    showPage('documentos');
+  } catch(err) { toast(err.message,'error'); }
+  finally { loading(btn, false); }
+}
+
+// ── PÁGINAS SIMPLES (KPI, Catálogos, etc.) ────────────────
+
+async function renderKpiAsistencia(page) {
+  page.innerHTML = `<div class="page-header"><div><div class="page-title">KPI Asistencia</div><div class="page-subtitle">Análisis por período</div></div></div>
+  <div id="kpi-asist-body"><div class="empty-state"><i class="fas fa-spinner fa-spin"></i><p>Cargando...</p></div></div>`;
+  try {
+    const data = await gas('getKpiAsistencia', {});
+    if (!data || data.length === 0) {
+      document.getElementById('kpi-asist-body').innerHTML = `<div class="empty-state"><i class="fas fa-chart-line"></i><h3>Sin datos de KPI</h3><p>Registra asistencia para generar KPIs</p></div>`;
+      return;
+    }
+    document.getElementById('kpi-asist-body').innerHTML = `
+      <div class="table-card">
+        <div class="table-card-header"><div><div class="table-card-title">Resumen Diario</div></div></div>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>Fecha</th><th>Cliente</th><th>Presentes</th><th>Plantilla</th><th>Faltas</th><th>Adicionales</th><th>Nivel</th><th>Semana</th><th>Mes</th></tr></thead>
+          <tbody>${data.map(r=>`<tr>
+            <td class="mono">${fmt(r['Fecha_Resumen'])}</td><td>${fmt(r['IdCliente'])}</td>
+            <td class="mono">${fmt(r['Asistencia_Dia'])}</td><td class="mono">${fmt(r['Plantilla_Dia'])}</td>
+            <td class="mono" style="color:var(--red)">${fmt(r['Faltas_Dia'])}</td>
+            <td class="mono" style="color:var(--amber)">${fmt(r['Adicional_Dia'])}</td>
+            <td><span style="color:${pctColor(r['Nivel_Asistencia'])};font-weight:600;font-family:monospace">${fmt(r['Nivel_Asistencia'])}</span></td>
+            <td class="mono">${fmt(r['Num_DSem'])}</td><td>${fmt(r['Nom_DMes'])}</td>
+          </tr>`).join('')}</tbody>
+        </table></div>
+      </div>`;
+  } catch(err) { toast(err.message,'error'); }
+}
+
+async function renderKpiDocumentos(page) {
+  page.innerHTML = `<div class="page-header"><div><div class="page-title">KPI Documentos</div><div class="page-subtitle">Análisis por formato y ubicación</div></div></div>
+  <div id="kpi-doc-body"><div class="empty-state"><i class="fas fa-spinner fa-spin"></i><p>Cargando...</p></div></div>`;
+  try {
+    const data = await gas('getKpiDocumentos', {});
+    if (!data || data.length === 0) {
+      document.getElementById('kpi-doc-body').innerHTML = `<div class="empty-state"><i class="fas fa-chart-pie"></i><h3>Sin datos de KPI</h3></div>`;
+      return;
+    }
+    document.getElementById('kpi-doc-body').innerHTML = `
+      <div class="table-card">
+        <div class="table-card-header"><div><div class="table-card-title">Resumen por Formato</div></div></div>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>Formato</th><th>Ubicación</th><th>Cliente</th><th>Campos</th><th>Total</th><th>% Llenado</th><th>% Req.Obl.</th><th>Mes</th></tr></thead>
+          <tbody>${data.map(r=>`<tr>
+            <td>${fmt(r['IDFormato'])}</td><td>${fmt(r['IDUbicacion'])}</td><td>${fmt(r['IdCliente'])}</td>
+            <td class="mono">${fmt(r['Campos_llenados'])}</td><td class="mono">${fmt(r['TCampos_llenados'])}</td>
+            <td><span style="color:${pctColor(r['PCampos_Llenados'])};font-weight:600;font-family:monospace">${fmt(r['PCampos_Llenados'])}%</span></td>
+            <td><span style="color:${pctColor(r['PRequisitos_Obligatorios'])};font-weight:600;font-family:monospace">${fmt(r['PRequisitos_Obligatorios'])}%</span></td>
+            <td>${fmt(r['Nom_DMes'])}</td>
+          </tr>`).join('')}</tbody>
+        </table></div>
+      </div>`;
+  } catch(err) { toast(err.message,'error'); }
+}
+
+async function renderUbicaciones(page) {
+  page.innerHTML = `<div class="page-header"><div><div class="page-title">Ubicaciones</div></div></div>
+  <div id="ubic-body"><div class="empty-state"><i class="fas fa-spinner fa-spin"></i><p>Cargando...</p></div></div>`;
+  try {
+    const data = await gas('getUbicaciones');
+    document.getElementById('ubic-body').innerHTML = `
+      <div class="table-card">
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>ID</th><th>Nombre</th><th>Descripción</th><th>Estatus</th><th>Creación</th></tr></thead>
+          <tbody>${(data||[]).map(r=>`<tr>
+            <td class="mono">${fmt(r['IDUbicacion'])}</td><td><strong>${fmt(r['Nombre_Ubicacion'])}</strong></td>
+            <td>${fmt(r['Descripcion'])}</td>
+            <td>${r['Estatus']==='Activo'?`<span class="badge badge-green"><span class="badge-dot"></span>Activa</span>`:`<span class="badge badge-gray">${r['Estatus']}</span>`}</td>
+            <td class="mono">${fmt(r['Fecha_Creacion'])}</td>
+          </tr>`).join('')||'<tr><td colspan="5"><div class="empty-state"><i class="fas fa-inbox"></i><p>Sin ubicaciones</p></div></td></tr>'}
+          </tbody>
+        </table></div>
+      </div>`;
+  } catch(err) { toast(err.message,'error'); }
+}
+
+async function renderClientes(page) {
+  page.innerHTML = `<div class="page-header"><div><div class="page-title">Clientes</div></div></div>
+  <div id="cli-body"><div class="empty-state"><i class="fas fa-spinner fa-spin"></i><p>Cargando...</p></div></div>`;
+  try {
+    const data = await gas('getClientes');
+    document.getElementById('cli-body').innerHTML = `
+      <div class="table-card">
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>ID</th><th>Nombre</th><th>Plantilla</th><th>Inicio Op.</th><th>Fin Op.</th><th>Estatus</th></tr></thead>
+          <tbody>${(data||[]).map(r=>`<tr>
+            <td class="mono">${fmt(r['IDCliente'])}</td><td><strong>${fmt(r['Nombre_Cliente'])}</strong></td>
+            <td class="mono">${fmt(r['Plantilla'])}</td>
+            <td class="mono">${fmt(r['Fecha_InicioOp'])}</td><td class="mono">${fmt(r['Fecha_FinOp'])}</td>
+            <td>${r['Estatus']==='Activo'?`<span class="badge badge-green"><span class="badge-dot"></span>Activo</span>`:`<span class="badge badge-amber">${r['Estatus']}</span>`}</td>
+          </tr>`).join('')||'<tr><td colspan="6"><div class="empty-state"><i class="fas fa-inbox"></i><p>Sin clientes</p></div></td></tr>'}
+          </tbody>
+        </table></div>
+      </div>`;
+  } catch(err) { toast(err.message,'error'); }
+}
+
+async function renderTurnos(page) {
+  page.innerHTML = `<div class="page-header"><div><div class="page-title">Turnos & Jornadas</div></div></div>
+  <div class="tabs"><div class="tab active" onclick="switchTab2(this,'t-turnos')">Turnos</div><div class="tab" onclick="switchTab2(this,'t-jornadas')">Jornadas</div></div>
+  <div id="t-turnos"></div><div id="t-jornadas" style="display:none"></div>`;
+  try {
+    const [turnos, jornadas] = await Promise.all([gas('getTurnos'), gas('getJornadas')]);
+    document.getElementById('t-turnos').innerHTML = `<div class="table-card"><div class="tbl-wrap"><table>
+      <thead><tr><th>ID</th><th>Nombre</th><th>Descripción</th><th>Jornada</th><th>Estatus</th></tr></thead>
+      <tbody>${(turnos||[]).map(r=>`<tr><td class="mono">${fmt(r['IDTurno'])}</td><td><strong>${fmt(r['Nombre_Turno'])}</strong></td><td>${fmt(r['Descripcion'])}</td><td>${fmt(r['IDJornada'])}</td><td><span class="badge badge-green"><span class="badge-dot"></span>${fmt(r['Estatus'])}</span></td></tr>`).join('')||'<tr><td colspan="5"><div class="empty-state"><p>Sin turnos</p></div></td></tr>'}</tbody>
+    </table></div></div>`;
+    document.getElementById('t-jornadas').innerHTML = `<div class="table-card"><div class="tbl-wrap"><table>
+      <thead><tr><th>ID</th><th>Nombre</th><th>Descripción</th><th>Estatus</th></tr></thead>
+      <tbody>${(jornadas||[]).map(r=>`<tr><td class="mono">${fmt(r['IDJornada'])}</td><td><strong>${fmt(r['Nombre_Jornada'])}</strong></td><td>${fmt(r['Descripcion'])}</td><td><span class="badge badge-green"><span class="badge-dot"></span>${fmt(r['Estatus'])}</span></td></tr>`).join('')||'<tr><td colspan="4"><div class="empty-state"><p>Sin jornadas</p></div></td></tr>'}</tbody>
+    </table></div></div>`;
+  } catch(err) { toast(err.message,'error'); }
+}
+
+async function renderFormatos(page) {
+  page.innerHTML = `<div class="page-header"><div><div class="page-title">Formatos de Documentos</div></div></div>
+  <div id="fmt-body"><div class="empty-state"><i class="fas fa-spinner fa-spin"></i><p>Cargando...</p></div></div>`;
+  try {
+    const data = await gas('getFormatos');
+    document.getElementById('fmt-body').innerHTML = `
+      <div class="table-card"><div class="tbl-wrap"><table>
+        <thead><tr><th>ID</th><th>Nombre</th><th>Ubicación</th><th>Campos Obl.</th><th>Estatus</th></tr></thead>
+        <tbody>${(data||[]).map(r=>`<tr>
+          <td class="mono">${fmt(r['IDFormato'])}</td><td><strong>${fmt(r['Nombre_Formato'])}</strong></td>
+          <td>${fmt(r['IDUbicacion'])}</td><td class="mono">${fmt(r['Campos_Obligatorios'])}</td>
+          <td>${r['Estatus']==='Activo'?`<span class="badge badge-green"><span class="badge-dot"></span>Activo</span>`:`<span class="badge badge-gray">${r['Estatus']}</span>`}</td>
+        </tr>`).join('')||'<tr><td colspan="5"><div class="empty-state"><p>Sin formatos</p></div></td></tr>'}
+        </tbody>
+      </table></div></div>`;
+  } catch(err) { toast(err.message,'error'); }
+}
+
+async function renderUsuarios(page) {
+  page.innerHTML = `<div class="page-header"><div><div class="page-title">Usuarios</div></div>
+  <div class="header-actions"><button class="btn btn-primary btn-sm" onclick="modalNuevoUsuario()"><i class="fas fa-user-plus"></i> Nuevo Usuario</button></div></div>
+  <div id="usr-body"><div class="empty-state"><i class="fas fa-spinner fa-spin"></i><p>Cargando...</p></div></div>`;
+  try {
+    const data = await gas('getUsuarios');
+    const perfiles = await gas('getClientes').catch(()=>[]);
+    document.getElementById('usr-body').innerHTML = `
+      <div class="table-card"><div class="tbl-wrap"><table>
+        <thead><tr><th>ID</th><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Teléfono</th><th>Estatus</th><th>Creación</th></tr></thead>
+        <tbody>${(data||[]).map(r=>{
+          const rolCls = rolBadgeClass(r['Nom_Rol']||'');
+          const ini = (r['Nombre Completo']||r['Usuario']||'?').substring(0,2).toUpperCase();
+          return `<tr>
+            <td class="mono">${fmt(r['IDUsuario'])}</td>
+            <td><div style="display:flex;align-items:center;gap:8px"><div class="user-avatar" style="width:26px;height:26px;font-size:10px">${ini}</div><span class="mono">${fmt(r['Usuario'])}</span></div></td>
+            <td>${fmt(r['Nombre Completo'])}</td>
+            <td><span class="badge ${rolCls}">${fmt(r['IDRol'])}</span></td>
+            <td class="mono">${fmt(r['Num_telefonico'])}</td>
+            <td>${r['Estatus']==='Activo'?`<span class="badge badge-green"><span class="badge-dot"></span>Activo</span>`:`<span class="badge badge-red"><span class="badge-dot"></span>Inactivo</span>`}</td>
+            <td class="mono">${fmt(r['F_Creacion'])}</td>
+          </tr>`;
+        }).join('')||'<tr><td colspan="7"><div class="empty-state"><p>Sin usuarios</p></div></td></tr>'}
+        </tbody>
+      </table></div></div>`;
+  } catch(err) { toast(err.message,'error'); }
+}
+
+async function modalNuevoUsuario() {
+  openModal('Nuevo Usuario', `
+    <div class="form-grid">
+      <div class="form-group"><label class="form-label">Usuario <span class="req">*</span></label><input id="nu-user" class="form-input" placeholder="nombre_usuario"></div>
+      <div class="form-group"><label class="form-label">Contraseña <span class="req">*</span></label><input id="nu-pass" class="form-input" type="password" placeholder="••••••••"></div>
+      <div class="form-group full"><label class="form-label">Nombre Completo</label><input id="nu-nombre" class="form-input" placeholder="Apellido Paterno Materno, Nombre"></div>
+      <div class="form-group"><label class="form-label">Correo <span class="req">*</span></label><input id="nu-correo" class="form-input" type="email" placeholder="correo@empresa.com"></div>
+      <div class="form-group"><label class="form-label">Teléfono</label><input id="nu-tel" class="form-input" placeholder="+52 999 000 0000"></div>
+      <div class="form-group"><label class="form-label">Rol (IDRol) <span class="req">*</span></label>
+        <select id="nu-rol" class="form-input">
+          <option value="">— Seleccionar —</option>
+          <option value="1">1 — Administrador</option>
+          <option value="2">2 — Capturista</option>
+          <option value="3">3 — Proveedor</option>
+          <option value="4">4 — Seguridad Vial</option>
+        </select>
+      </div>
+    </div>`,
+    [
+      { label: 'Cancelar', cls: 'btn-outline', fn: closeModal },
+      { label: '<i class="fas fa-save"></i> Crear Usuario', cls: 'btn-primary', fn: guardarUsuario },
+    ]
+  );
+}
+
+async function guardarUsuario() {
+  const btn = document.querySelector('#modal-footer .btn-primary');
+  const payload = {
+    Usuario:         document.getElementById('nu-user').value.trim(),
+    Contraseña:      document.getElementById('nu-pass').value,
+    'Nombre Completo': document.getElementById('nu-nombre').value.trim(),
+    Correo:          document.getElementById('nu-correo').value.trim(),
+    Num_telefonico:  document.getElementById('nu-tel').value.trim(),
+    IDRol:           document.getElementById('nu-rol').value,
+  };
+  if (!payload.Usuario || !payload.Contraseña || !payload.Correo || !payload.IDRol) {
+    toast('Llena los campos obligatorios', 'warning'); return;
+  }
+  loading(btn, true);
+  try {
+    const res = await gas('crearUsuario', payload);
+    toast(`Usuario creado: ${res.IDUsuario}`, 'success');
+    closeModal();
+    showPage('usuarios');
+  } catch(err) { toast(err.message,'error'); }
+  finally { loading(btn, false); }
+}
+
+async function renderLoginLog(page) {
+  page.innerHTML = `<div class="page-header"><div><div class="page-title">Log de Acceso</div><div class="page-subtitle">Sesiones del sistema</div></div></div>
+  <div id="log-body"><div class="empty-state"><i class="fas fa-spinner fa-spin"></i><p>Cargando...</p></div></div>`;
+  try {
+    const data = await gas('getLoginLog');
+    document.getElementById('log-body').innerHTML = `
+      <div class="table-card"><div class="tbl-wrap"><table>
+        <thead><tr><th>IDLogin</th><th>Usuario</th><th>Serie Equipo</th><th>Rol</th><th>Entrada</th><th>Salida</th><th>Estado</th></tr></thead>
+        <tbody>${(data||[]).map(r=>`<tr>
+          <td class="mono">${fmt(r['IDLogin'])}</td><td class="mono">${fmt(r['Usuario'])}</td>
+          <td class="mono" style="font-size:11px">${fmt(r['Serie_Equipo'])}</td>
+          <td><span class="badge ${rolBadgeClass('')}">${fmt(r['IDRol'])}</span></td>
+          <td class="mono">${fmt(r['H_Entrada'])}</td>
+          <td class="mono">${fmt(r['H_Salida'])}</td>
+          <td>${r['Estado']==='activo'?`<span class="badge badge-green"><span class="badge-dot"></span>En sesión</span>`:`<span class="badge badge-gray">Cerrada</span>`}</td>
+        </tr>`).join('')||'<tr><td colspan="7"><div class="empty-state"><p>Sin registros</p></div></td></tr>'}
+        </tbody>
+      </table></div></div>`;
+  } catch(err) { toast(err.message,'error'); }
+}
+
+async function renderResumenIA(page) {
+  page.innerHTML = `<div class="page-header"><div><div class="page-title">Resumen IA</div><div class="page-subtitle">Análisis inteligente generado automáticamente</div></div></div>
+  <div id="ia-body"><div class="empty-state"><i class="fas fa-spinner fa-spin"></i><p>Cargando...</p></div></div>`;
+  try {
+    const data = await gas('getResumenIA', {});
+    if (!data || data.length === 0) {
+      document.getElementById('ia-body').innerHTML = `<div class="empty-state"><i class="fas fa-robot"></i><h3>Sin resúmenes IA</h3><p>Genera el primer análisis desde el panel de administración</p></div>`;
+      return;
+    }
+    document.getElementById('ia-body').innerHTML = data.map(r=>`
+      <div class="ia-card">
+        <div class="ia-chip"><i class="fas fa-robot" style="font-size:10px"></i> Resumen IA · ${fmt(r['Mes'])} ${fmt(r['NumMes'])}</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px"><i class="fas fa-calendar"></i> ${fmt(r['Fecha_Resumen'])} · Cliente: ${fmt(r['IDCliente'])}</div>
+        <div class="ia-text">${fmt(r['ResumenIA'])}</div>
+      </div>`).join('');
+  } catch(err) { toast(err.message,'error'); }
+}
+
+// ── HELPERS UI ────────────────────────────────────────────
+
+function openModal(titulo, bodyHtml, botones) {
+  document.getElementById('modal-title').textContent = titulo;
+  document.getElementById('modal-body').innerHTML    = bodyHtml;
+  const footer = document.getElementById('modal-footer');
+  footer.innerHTML = '';
+  (botones || []).forEach(b => {
+    const btn = document.createElement('button');
+    btn.className = `btn ${b.cls}`;
+    btn.innerHTML = b.label;
+    btn.onclick   = b.fn;
+    footer.appendChild(btn);
+  });
+  document.getElementById('modal-overlay').style.display = 'flex';
+}
+
+function closeModal() {
+  document.getElementById('modal-overlay').style.display = 'none';
+}
+
+function filtrarTabla(tablaId, query) {
+  const tabla = document.getElementById(tablaId);
+  if (!tabla) return;
+  const q = query.toLowerCase();
+  tabla.querySelectorAll('tbody tr').forEach(tr => {
+    tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+}
+
+function paginacion(actual, total, fnName) {
+  if (total <= 1) return '';
+  let html = '';
+  if (actual > 1) html += `<button class="btn btn-outline btn-sm" onclick="${fnName}(${actual-1})">← Ant</button>`;
+  html += `<span style="font-size:12px;padding:6px 10px;color:var(--text-muted)">${actual} / ${total}</span>`;
+  if (actual < total) html += `<button class="btn btn-primary btn-sm" onclick="${fnName}(${actual+1})">Sig →</button>`;
+  return html;
+}
+
+function mesesOpts() {
+  const meses = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  return meses.map((m,i)=>`<option value="${i+1}">${m}</option>`).join('');
+}
+
+function switchTab2(el, id) {
+  document.querySelectorAll('#page-turnos .tab').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active');
+  ['t-turnos','t-jornadas'].forEach(tid=>{
+    const el2 = document.getElementById(tid);
+    if (el2) el2.style.display = tid === id ? 'block' : 'none';
+  });
+}
+
+function globalSearch(q) {
+  if (q.length < 2) return;
+  // Búsqueda simple: filtra tabla activa si existe
+  const tbody = document.querySelector('.page.active tbody');
+  if (tbody) {
+    tbody.querySelectorAll('tr').forEach(tr => {
+      tr.style.display = tr.textContent.toLowerCase().includes(q.toLowerCase()) ? '' : 'none';
+    });
+  }
+}
+
+function toggleUserMenu() {}  // Placeholder para futuro menú desplegable
+
+// ── INIT ──────────────────────────────────────────────────
+
+window.addEventListener('DOMContentLoaded', () => {
+  // Verificar sesión existente al cargar
+  gas('getSesion').then(res => {
+    if (res && res.usuario) {
+      App.sesion = res;
+      iniciarApp();
+    }
+  }).catch(() => {});
+});
+</script>
