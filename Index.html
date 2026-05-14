@@ -1,203 +1,137 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8">
-  <title>L-SENTRY | Panel de Control</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <!-- Importamos iconos profesionales -->
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-  <style>
-    /* Efecto de cristal para elementos premium */
-    .glass-panel {
-      background: rgba(31, 41, 55, 0.7);
-      backdrop-filter: blur(10px);
-      border: 1px solid rgba(6, 182, 212, 0.2);
-    }
-    .seccion-oculta { display: none; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>L-SENTRY</title>
+<?!= include('Estilos'); ?>
 </head>
-<body class="bg-gray-900 text-white font-sans flex h-screen overflow-hidden">
+<body class="bg-900">
 
-  <!-- ==================== MENU LATERAL (SIDEBAR) ==================== -->
-  <aside class="w-64 glass-panel flex flex-col shadow-2xl z-10">
-    <div class="p-6 text-center border-b border-gray-700">
-      <h1 class="text-3xl font-bold text-cyan-400 tracking-widest">L-SENTRY</h1>
-      <p class="text-xs text-gray-400 mt-1 uppercase tracking-widest">Gestión Operativa</p>
-    </div>
-    
-    <nav class="flex-1 px-4 py-6 space-y-2">
-      <!-- Botones de Navegación -->
-      <button onclick="cambiarVista('vista-captura')" class="w-full flex items-center gap-3 px-4 py-3 bg-cyan-900 text-cyan-100 rounded-lg hover:bg-cyan-700 transition">
-        <i class="fa-solid fa-pen-to-square"></i> Captura de Turnos
-      </button>
-      <button onclick="cambiarVista('vista-registros'); cargarTablaRegistros();" class="w-full flex items-center gap-3 px-4 py-3 text-gray-300 hover:bg-gray-800 rounded-lg transition">
-        <i class="fa-solid fa-database"></i> Base de Datos
-      </button>
-      <button onclick="cambiarVista('vista-kpi')" class="w-full flex items-center gap-3 px-4 py-3 text-gray-300 hover:bg-gray-800 rounded-lg transition">
-        <i class="fa-solid fa-chart-line"></i> Indicadores (KPIs)
-      </button>
-    </nav>
-    
-    <div class="p-4 border-t border-gray-700 text-center text-xs text-gray-500">
-      Usuario Activo: Admin <br>
-      v2.0.1
-    </div>
-  </aside>
-
-  <!-- ==================== ÁREA DE TRABAJO PRINCIPAL ==================== -->
-  <main class="flex-1 p-8 overflow-y-auto relative">
-    
-    <!-- MÓDULO 1: CAPTURA DE ASISTENCIA (Tu formulario anterior mejorado) -->
-    <section id="vista-captura" class="max-w-4xl mx-auto">
-      <div class="mb-6 border-b border-gray-700 pb-4">
-        <h2 class="text-2xl font-semibold text-cyan-300">Registro de Elementos</h2>
-        <p class="text-gray-400 text-sm">El motor calculará automáticamente los turnos de 12 y 24 horas.</p>
+<!-- ══════════════════════════════════════════════
+     PANTALLA DE LOGIN
+══════════════════════════════════════════════ -->
+<div id="screen-login" class="screen active">
+  <div class="login-bg">
+    <div class="login-glow"></div>
+  </div>
+  <div class="login-card">
+    <div class="login-logo">
+      <div class="logo-icon"><i class="fas fa-shield-alt"></i></div>
+      <div>
+        <div class="logo-text">L-<span>SENTRY</span></div>
+        <div class="logo-sub">Sistema de Administración de Seguridad</div>
       </div>
+    </div>
 
-      <div class="glass-panel p-8 rounded-lg shadow-xl border-t-4 border-cyan-500">
-        <form id="formularioAsistencia" onsubmit="enviarDatos(event)">
-          <div class="grid grid-cols-2 gap-6 mb-6">
-            <div>
-              <label class="block text-sm text-gray-300 mb-2">ID Cliente</label>
-              <input type="text" id="IDCliente" class="w-full bg-gray-800 rounded p-3 text-white border border-gray-600 focus:border-cyan-500 outline-none" required>
-            </div>
-            <div>
-              <label class="block text-sm text-gray-300 mb-2">Nombre Completo del Elemento</label>
-              <input type="text" id="Nombre_Completo" class="w-full bg-gray-800 rounded p-3 text-white border border-gray-600 focus:border-cyan-500 outline-none" required>
-            </div>
-          </div>
-          <div class="grid grid-cols-2 gap-6 mb-6">
-            <div>
-              <label class="block text-sm text-gray-300 mb-2">Fecha y Hora de Entrada</label>
-              <div class="flex gap-2">
-                <input type="date" id="Fecha_Entrada" class="w-2/3 bg-gray-800 rounded p-3 text-white border border-gray-600 outline-none" required>
-                <input type="time" id="Hora_Entrada" class="w-1/3 bg-gray-800 rounded p-3 text-white border border-gray-600 outline-none" required>
-              </div>
-            </div>
-            <div>
-              <label class="block text-sm text-gray-300 mb-2">Fecha y Hora de Salida</label>
-              <div class="flex gap-2">
-                <input type="date" id="Fecha_Salida" class="w-2/3 bg-gray-800 rounded p-3 text-white border border-gray-600 outline-none" required>
-                <input type="time" id="Hora_Salida" class="w-1/3 bg-gray-800 rounded p-3 text-white border border-gray-600 outline-none" required>
-              </div>
-            </div>
-          </div>
-          <button type="submit" id="btnGuardar" class="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3 rounded-lg transition duration-300 shadow-lg hover:shadow-cyan-500/50">
-            <i class="fa-solid fa-microchip mr-2"></i> Procesar y Guardar Jornada
-          </button>
-        </form>
-        <div id="mensaje" class="mt-4 text-center text-sm hidden font-semibold"></div>
+    <div id="login-error" class="alert-error" style="display:none"></div>
+
+    <div class="form-group">
+      <label class="form-label">Usuario</label>
+      <div class="input-icon-wrap">
+        <i class="fas fa-user"></i>
+        <input id="inp-usuario" class="form-input" type="text"
+               placeholder="Tu nombre de usuario"
+               onkeydown="if(event.key==='Enter') doLogin()">
       </div>
-    </section>
+    </div>
+    <div class="form-group" style="margin-top:14px">
+      <label class="form-label">Contraseña</label>
+      <div class="input-icon-wrap">
+        <i class="fas fa-lock"></i>
+        <input id="inp-password" class="form-input" type="password"
+               placeholder="••••••••"
+               onkeydown="if(event.key==='Enter') doLogin()">
+        <i class="fas fa-eye toggle-pass" onclick="togglePass()" id="eye-icon"></i>
+      </div>
+    </div>
 
-    <!-- MÓDULO 2: VISUALIZADOR DE BASE DE DATOS -->
-    <section id="vista-registros" class="seccion-oculta max-w-6xl mx-auto">
-      <div class="mb-6 flex justify-between items-center border-b border-gray-700 pb-4">
+    <button id="btn-login" class="btn btn-primary login-btn" onclick="doLogin()">
+      <span id="btn-login-text"><i class="fas fa-sign-in-alt"></i> Iniciar Sesión</span>
+      <span id="btn-login-loading" style="display:none"><i class="fas fa-spinner fa-spin"></i> Verificando...</span>
+    </button>
+
+    <div class="login-footer">
+      <i class="fas fa-shield-check"></i> Conexión segura · L-SENTRY v2.0
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════
+     APP PRINCIPAL (se muestra tras login)
+══════════════════════════════════════════════ -->
+<div id="screen-app" class="screen" style="display:none; flex-direction:column; height:100vh">
+
+  <!-- TOPBAR -->
+  <div id="topbar">
+    <div class="logo-mark">
+      <div class="logo-icon sm"><i class="fas fa-shield-alt"></i></div>
+      <div class="logo-text sm">L-<span>SENTRY</span></div>
+    </div>
+    <div class="topbar-search">
+      <i class="fas fa-search"></i>
+      <input type="text" placeholder="Buscar..." id="global-search" oninput="globalSearch(this.value)">
+    </div>
+    <div class="topbar-actions">
+      <!-- Badge solicitudes pendientes (visible para Admin y Seguridad Vial) -->
+      <div id="btn-solicitudes-badge" class="icon-btn" onclick="showPage('solicitudes')" style="display:none" title="Solicitudes Pendientes">
+        <i class="fas fa-bell"></i>
+        <div class="notif-dot" id="notif-count"></div>
+      </div>
+      <div class="icon-btn" onclick="sincronizar()" title="Sincronizar datos">
+        <i class="fas fa-sync-alt" id="sync-icon"></i>
+      </div>
+      <div class="user-chip" onclick="toggleUserMenu()">
+        <div class="user-avatar" id="user-avatar-top">?</div>
         <div>
-          <h2 class="text-2xl font-semibold text-cyan-300">Registros Recientes</h2>
-          <p class="text-gray-400 text-sm">Últimos turnos procesados en BdAsistencia.</p>
+          <div class="user-name" id="user-name-top">—</div>
+          <div class="user-rol"  id="user-rol-top">—</div>
         </div>
-        <button onclick="cargarTablaRegistros()" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm transition">
-          <i class="fa-solid fa-rotate-right"></i> Actualizar
-        </button>
+        <i class="fas fa-chevron-down" style="font-size:9px;color:var(--text-muted)"></i>
       </div>
-      
-      <div class="glass-panel rounded-lg overflow-hidden">
-        <table class="w-full text-left text-sm">
-          <thead class="bg-gray-800 text-cyan-400">
-            <tr>
-              <th class="p-4 border-b border-gray-700">ID Asistencia</th>
-              <th class="p-4 border-b border-gray-700">Elemento</th>
-              <th class="p-4 border-b border-gray-700">Entrada</th>
-              <th class="p-4 border-b border-gray-700">Salida</th>
-            </tr>
-          </thead>
-          <tbody id="cuerpoTabla" class="text-gray-300">
-            <tr><td colspan="4" class="p-4 text-center">Cargando datos del servidor...</td></tr>
-          </tbody>
-        </table>
+    </div>
+  </div>
+
+  <!-- LAYOUT -->
+  <div style="display:flex;flex:1;overflow:hidden">
+
+    <!-- SIDEBAR -->
+    <nav id="sidebar">
+      <div id="nav-menu"></div>
+      <div class="sidebar-footer">
+        <div class="nav-item danger" onclick="doLogout()">
+          <i class="fas fa-sign-out-alt"></i> Cerrar Sesión
+        </div>
       </div>
-    </section>
+    </nav>
 
-    <!-- MÓDULO 3: KPIs (En construcción) -->
-    <section id="vista-kpi" class="seccion-oculta max-w-4xl mx-auto text-center mt-20">
-      <i class="fa-solid fa-person-digging text-6xl text-gray-600 mb-4"></i>
-      <h2 class="text-2xl font-semibold text-gray-400">Módulo de KPIs en Desarrollo</h2>
-      <p class="text-gray-500 mt-2">Aquí conectaremos los gráficos de cumplimiento y rendimiento de la flota.</p>
-    </section>
+    <!-- MAIN CONTENT -->
+    <main id="main-content">
+      <!-- Las páginas se inyectan aquí dinámicamente -->
+      <div id="page-loader" style="display:none" class="page-loader">
+        <i class="fas fa-circle-notch fa-spin"></i>
+      </div>
+      <div id="pages-container"></div>
+    </main>
 
-  </main>
+  </div>
+</div>
 
-  <!-- ==================== LÓGICA DE LA APLICACIÓN (JS) ==================== -->
-  <script>
-    // Función para cambiar entre pantallas dinámicamente
-    function cambiarVista(idVista) {
-      document.getElementById('vista-captura').classList.add('seccion-oculta');
-      document.getElementById('vista-registros').classList.add('seccion-oculta');
-      document.getElementById('vista-kpi').classList.add('seccion-oculta');
-      document.getElementById(idVista).classList.remove('seccion-oculta');
-    }
+<!-- ══ TOAST NOTIFICATIONS ══ -->
+<div id="toast-container"></div>
 
-    // Función del Formulario (se mantiene igual, conectada a tu motor matemático)
-    function enviarDatos(event) {
-      event.preventDefault();
-      const btn = document.getElementById('btnGuardar');
-      btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Procesando...';
-      btn.disabled = true;
+<!-- ══ MODAL CONTAINER ══ -->
+<div id="modal-overlay" class="modal-overlay" onclick="closeModal()" style="display:none">
+  <div id="modal-box" class="modal-box" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-title">Modal</div>
+      <button class="icon-btn" onclick="closeModal()"><i class="fas fa-times"></i></button>
+    </div>
+    <div id="modal-body"></div>
+    <div id="modal-footer" class="modal-footer"></div>
+  </div>
+</div>
 
-      const datosFormulario = {
-        IDCliente: document.getElementById('IDCliente').value,
-        Nombre_Completo: document.getElementById('Nombre_Completo').value,
-        Fecha_Entrada: document.getElementById('Fecha_Entrada').value,
-        Hora_Entrada: document.getElementById('Hora_Entrada').value,
-        Fecha_Salida: document.getElementById('Fecha_Salida').value,
-        Hora_Salida: document.getElementById('Hora_Salida').value,
-        IDUbicacion: "BASE-MERIDA", 
-        IDJornada: "JOR-APP",
-        IDTurno: "TUR-APP"
-      };
-
-      google.script.run
-        .withSuccessHandler(res => {
-          const divMensaje = document.getElementById('mensaje');
-          divMensaje.innerText = res;
-          divMensaje.className = "mt-4 text-center text-sm font-semibold text-green-400 block p-3 bg-gray-800 rounded border border-green-500";
-          document.getElementById('formularioAsistencia').reset();
-          btn.innerHTML = '<i class="fa-solid fa-microchip mr-2"></i> Procesar y Guardar Jornada';
-          btn.disabled = false;
-        })
-        .guardarDesdeInterfaz(datosFormulario);
-    }
-
-    // Función para cargar los datos en la tabla (Conexión Bidireccional)
-    function cargarTablaRegistros() {
-      const cuerpoTabla = document.getElementById('cuerpoTabla');
-      cuerpoTabla.innerHTML = '<tr><td colspan="4" class="p-4 text-center"><i class="fa-solid fa-spinner fa-spin text-cyan-500"></i> Cargando...</td></tr>';
-      
-      google.script.run
-        .withSuccessHandler(filas => {
-          cuerpoTabla.innerHTML = '';
-          if(filas.length === 0) {
-            cuerpoTabla.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-gray-500">No hay registros aún.</td></tr>';
-            return;
-          }
-          // Construimos las filas de la tabla
-          filas.forEach(fila => {
-            const tr = document.createElement('tr');
-            tr.className = "hover:bg-gray-800 border-b border-gray-700 transition";
-            // Ajusta los índices según las columnas de tu BdAsistencia. 
-            // 0:IDAsistencia, 6:Nombre_Completo, 8:Fecha_Entrada, 9:Hora_Entrada, 10:Fecha_Salida, 11:Hora_Salida
-            tr.innerHTML = `
-              <td class="p-4 text-cyan-300 font-mono text-xs">${fila[0] || 'N/A'}</td>
-              <td class="p-4 font-semibold">${fila[6] || 'N/A'}</td>
-              <td class="p-4 text-gray-400">${fila[8]} ${fila[9]}</td>
-              <td class="p-4 text-gray-400">${fila[10]} ${fila[11]}</td>
-            `;
-            cuerpoTabla.appendChild(tr);
-          });
-        })
-        .obtenerRegistrosAsistencia();
-    }
-  </script>
+<?!= include('Scripts'); ?>
 </body>
 </html>
