@@ -27,12 +27,12 @@ function actionLogin(payload) {
   }
 
   // Verificar contraseña (comparación directa; en producción usa hash)
-  if (String(loginRow['Contraseños']).trim() !== String(password).trim()) {
+  if (String(loginRow['Contraseña']).trim() !== String(password).trim()) {
     return { ok: false, error: 'Contraseña incorrecta.' };
   }
 
   // Verificar estado
-  if (String(loginRow['Estado']).trim().toLowerCase() !== 'activo') {
+  if (String(loginRow['Estado']).trim().toLowerCase() !== 'Activo') {
     return { ok: false, error: 'Tu cuenta está inactiva. Contacta al administrador.' };
   }
 
